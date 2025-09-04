@@ -10,5 +10,6 @@ Couldn't quite nail down the look of the smooth fade, it erases lines where they
 <img width="272" height="710" alt="image" src="https://github.com/user-attachments/assets/7066a654-05ca-412e-b907-7bdc93485b7d" />
 
 Usage example with OBS on the directional slasher Swordai
+
 https://github.com/user-attachments/assets/3e0eceae-b649-4981-8878-dcd9ae051807
 
