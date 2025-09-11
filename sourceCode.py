@@ -144,17 +144,27 @@ class MouseTrackerUI:
         self.settings_window = None
         self._new_wndproc_ptr = None
         self.pynput_listener = None
+        
+        # Image references to prevent garbage collection
         self.cursor_photo_image = None
         self.left_click_photo_image = None
         self.left_click_release_photo_image = None
         self.right_click_photo_image = None
         self.right_click_release_photo_image = None
+        
         self.cursor_image_id = None
         self._setup_main_window()
         self._setup_bindings()
         self._register_raw_input()
         self._start_pynput_listener()
         self._update_images()
+        self.anchor_map = {
+            "Center": tk.CENTER,
+            "Top-Left": tk.NW,
+            "Top-Right": tk.NE,
+            "Bottom-Left": tk.SW,
+            "Bottom-Right": tk.SE
+        }
 
     def _setup_main_window(self) -> None:
         """Initializes the main application window and canvas."""
@@ -257,7 +267,6 @@ class MouseTrackerUI:
         """Loads and resizes all images based on settings."""
         self.cursor_photo_image = self._load_and_resize_image(self.settings.config.get("cursor_image_path"), self.settings.config.get("cursor_scale", 1.0)) if self.settings.config.get("cursor_image_enabled", False) else None
         
-        # Consolidate the click image loading based on a single toggle
         if self.settings.config.get("click_images_enabled", False):
             self.left_click_photo_image = self._load_and_resize_image(self.settings.config.get("left_click_image_path"), self.settings.config.get("left_click_image_scale", 1.0))
             self.left_click_release_photo_image = self._load_and_resize_image(self.settings.config.get("left_click_release_image_path"), self.settings.config.get("left_click_release_image_scale", 1.0))
@@ -324,7 +333,7 @@ class MouseTrackerUI:
             if p1 is not None and p2 is not None:
                 self._draw_line_segment(p1, p2, now, lifespan, self.events.points[i])
 
-        # Drawing order based on the new setting
+        # Drawing order logic: cursor on top of clicks or vice versa
         if self.settings.config["cursor_on_top"]:
             self._draw_clicks(cx, cy)
             self._draw_cursor(cx, cy)
@@ -335,14 +344,10 @@ class MouseTrackerUI:
         self.root.after(self.settings.config["frame_interval"], self.update_canvas)
 
     def _draw_cursor(self, cx, cy):
-        """Draws the custom cursor or a fallback dot."""
+        """Draws the custom cursor."""
         if self.cursor_photo_image:
-            self.canvas.create_image(cx + self.events.current_pos[0], cy + self.events.current_pos[1], image=self.cursor_photo_image)
-        else:
-            r = 3
-            self.canvas.create_oval(cx + self.events.current_pos[0] - r, cy + self.events.current_pos[1] - r,
-                                    cx + self.events.current_pos[0] + r, cy + self.events.current_pos[1] + r,
-                                    fill="white", outline="white")
+            anchor = self.anchor_map.get(self.settings.config.get("cursor_alignment", "Center"), tk.CENTER)
+            self.canvas.create_image(cx + self.events.current_pos[0], cy + self.events.current_pos[1], image=self.cursor_photo_image, anchor=anchor)
 
     def _draw_clicks(self, cx, cy):
         """Draws the custom click dots or fallback dots."""
@@ -402,6 +407,9 @@ class MouseTrackerUI:
             self.canvas.create_line(p1, p2, fill=self.settings.config["line_color"], width=width)
 
 class SettingsPanel:
+    """Manages the settings window and its UI components."""
+    
+    # Map of Python types to Tkinter variable types
     TK_VAR_TYPES = {
         bool: BooleanVar,
         int: IntVar,
@@ -414,11 +422,14 @@ class SettingsPanel:
         self.config = config
         self.apply_callback = apply_callback
         self.settings_window = Toplevel(parent)
+        
+        # A dictionary to hold all Tkinter variables, allowing for easy access and updates.
         self.settings_vars: Dict[str, Any] = {}
         self._setup_window()
         self._create_ui()
 
     def _setup_window(self) -> None:
+        """Initializes the settings window properties."""
         self.settings_window.title("Settings")
         self.settings_window.transient(self.parent)
         self.settings_window.grab_set()
@@ -426,90 +437,62 @@ class SettingsPanel:
         self.settings_window.minsize(300, 400)
 
     def get_toplevel_window(self) -> Toplevel:
+        """Returns the main toplevel window for external access."""
         return self.settings_window
 
     def _create_ui(self) -> None:
+        """Builds the main UI for the settings window with multiple tabs."""
         notebook = ttk.Notebook(self.settings_window)
         notebook.pack(padx=10, pady=10, fill="both", expand=True)
 
-        # General Settings Tab
+        click_images_enabled_var = BooleanVar(value=self.config.get("click_images_enabled", False))
+        self.settings_vars["click_images_enabled"] = click_images_enabled_var
+
+        # --- General Settings Tab ---
         general_tab = Frame(notebook, padx=10, pady=10)
         notebook.add(general_tab, text="General Settings")
         
         general_settings_keys = ["line_lifespan", "frame_interval", "canvas_bg_color", "coordinate_multiplier"]
-        row = 0
-        for key in general_settings_keys:
-            label_text = key.replace('_', ' ').title() + ":"
-            self._create_setting_field(general_tab, label_text, key, row)
-            row += 1
+        for row, key in enumerate(general_settings_keys):
+            self._create_setting_field(general_tab, key, row)
             
-        # Auto-Recenter group
-        recenter_enabled_var = BooleanVar(value=self.config.get("auto_recenter_enabled", False))
-        self.settings_vars["auto_recenter_enabled"] = recenter_enabled_var
-        
-        recenter_entry_var = DoubleVar(value=self.config.get("recenter_timeout_seconds", 10.0))
-        self.settings_vars["recenter_timeout_seconds"] = recenter_entry_var
+        self._create_recenter_group(general_tab, len(general_settings_keys))
 
-        recenter_checkbutton = Checkbutton(general_tab, text="Enable Auto-Recenter", variable=recenter_enabled_var)
-        recenter_checkbutton.grid(row=row, column=0, columnspan=2, sticky="w", padx=5, pady=5)
-        row += 1
-
-        Label(general_tab, text="Inactivity Timeout (seconds):").grid(row=row, column=0, sticky="w", padx=5, pady=2)
-        recenter_entry = Entry(general_tab, textvariable=recenter_entry_var, width=10)
-        recenter_entry.grid(row=row, column=1, padx=5, pady=2)
-        
-        def toggle_recenter_state(*args):
-            state = tk.NORMAL if recenter_enabled_var.get() else tk.DISABLED
-            recenter_entry.config(state=state)
-        
-        recenter_enabled_var.trace_add("write", toggle_recenter_state)
-        toggle_recenter_state() # Initialize state
-
-        # Line Appearance Tab
+        # --- Line Appearance Tab ---
         line_tab = Frame(notebook, padx=10, pady=10)
         notebook.add(line_tab, text="Line Appearance")
         line_settings_keys = ["line_width", "line_color", "line_style"]
-        row = 0
-        for key in line_settings_keys:
-            label_text = key.replace('_', ' ').title() + ":"
-            self._create_setting_field(line_tab, label_text, key, row)
-            row += 1
+        for row, key in enumerate(line_settings_keys):
+            self._create_setting_field(line_tab, key, row)
 
-        # Click Dot Appearance Tab
+        # --- Click Dot Appearance Tab ---
         click_tab = Frame(notebook, padx=10, pady=10)
         notebook.add(click_tab, text="Click Dot Appearance")
-        click_settings_keys = ["left_click_radius", "left_click_color", "right_click_radius", "right_click_color", "left_click_release_radius", "left_click_release_color", "right_click_release_radius", "right_click_release_color"]
-        row = 0
-        for key in click_settings_keys:
-            label_text = key.replace('_', ' ').title() + ":"
-            self._create_setting_field(click_tab, label_text, key, row)
-            row += 1
+        self._create_click_dot_group(click_tab, click_images_enabled_var)
         
-        # Custom Cursor Tab
+        # --- Custom Cursor Tab ---
         cursor_tab = Frame(notebook, padx=10, pady=10)
         notebook.add(cursor_tab, text="Custom Cursor")
+
+        cursor_image_enabled_var = BooleanVar(value=self.config.get("cursor_image_enabled", False))
+        self.settings_vars["cursor_image_enabled"] = cursor_image_enabled_var
+
         self._create_toggled_image_group(
             cursor_tab,
             "Enable Custom Cursor",
-            "cursor_image_enabled",
+            cursor_image_enabled_var,
             [("Cursor Image Path:", "cursor_image_path")],
-            [("Cursor Scale:", "cursor_scale")]
+            [("Cursor Scale:", "cursor_scale")],
+            is_cursor_tab=True
         )
         
-        # Add the new toggle to the Custom Cursor tab
-        row = 10 # Place below the image settings
-        cursor_on_top_var = BooleanVar(value=self.config.get("cursor_on_top", False))
-        self.settings_vars["cursor_on_top"] = cursor_on_top_var
-        Checkbutton(cursor_tab, text="Draw Cursor Over Clicks", variable=cursor_on_top_var).grid(row=row, column=0, columnspan=2, sticky="w", padx=5, pady=5)
-
-
-        # Custom Click Images Tab
+        # --- Custom Click Images Tab ---
         clicks_tab = Frame(notebook, padx=10, pady=10)
         notebook.add(clicks_tab, text="Custom Clicks")
         self._create_toggled_image_group(
             clicks_tab,
             "Enable Custom Clicks",
-            "click_images_enabled",
+            click_images_enabled_var,
             [
                 ("Left Click (Press):", "left_click_image_path"),
                 ("Left Click (Release):", "left_click_release_image_path"),
@@ -521,19 +504,89 @@ class SettingsPanel:
                 ("Left Click Release Scale:", "left_click_release_image_scale"),
                 ("Right Click Scale:", "right_click_image_scale"),
                 ("Right Click Release Scale:", "right_click_release_image_scale")
-            ]
+            ],
+            is_cursor_tab=False
         )
         
+        # --- Control Buttons ---
         button_frame = Frame(self.settings_window)
         button_frame.pack(pady=(0, 10))
-        Button(button_frame, text="OK", command=self.apply_and_close).pack(side="left", padx=5)
+        Button(button_frame, text="Okay", command=self.apply_and_close).pack(side="left", padx=5)
         Button(button_frame, text="Apply", command=self._apply_only).pack(side="left", padx=5)
         Button(button_frame, text="Cancel", command=self.close_window).pack(side="left", padx=5)
 
-    def _create_toggled_image_group(self, parent_frame: Frame, toggle_text: str, enabled_key: str, path_fields: List[Tuple[str, str]], scale_fields: List[Tuple[str, str]]) -> None:
-        enabled_var = BooleanVar(value=self.config.get(enabled_key, False))
-        self.settings_vars[enabled_key] = enabled_var
+    def _create_recenter_group(self, parent_frame: Frame, start_row: int) -> None:
+        """Creates the widgets for the auto-recenter setting."""
+        recenter_enabled_var = BooleanVar(value=self.config.get("auto_recenter_enabled", False))
+        self.settings_vars["auto_recenter_enabled"] = recenter_enabled_var
         
+        recenter_entry_var = DoubleVar(value=self.config.get("recenter_timeout_seconds", 10.0))
+        self.settings_vars["recenter_timeout_seconds"] = recenter_entry_var
+
+        recenter_checkbutton = Checkbutton(parent_frame, text="Enable Auto-Recenter", variable=recenter_enabled_var)
+        recenter_checkbutton.grid(row=start_row, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        
+        recenter_label = Label(parent_frame, text="Inactivity Timeout (seconds):")
+        recenter_label.grid(row=start_row + 1, column=0, sticky="w", padx=5, pady=2)
+        recenter_entry = Entry(parent_frame, textvariable=recenter_entry_var, width=10)
+        recenter_entry.grid(row=start_row + 1, column=1, padx=5, pady=2)
+        
+        def toggle_recenter_state(*args):
+            state = tk.NORMAL if recenter_enabled_var.get() else tk.DISABLED
+            recenter_label.config(state=state)
+            recenter_entry.config(state=state)
+        
+        recenter_enabled_var.trace_add("write", toggle_recenter_state)
+        toggle_recenter_state()
+
+    def _create_click_dot_group(self, parent_frame: Frame, enabled_var: BooleanVar) -> None:
+        """
+        Creates the widgets for the "Click Dot Appearance" tab.
+        These widgets are disabled when custom clicks are enabled.
+        """
+        widgets = []
+        tooltip = Tooltip(parent_frame, "These settings are disabled because 'Custom Clicks' is enabled.")
+        
+        click_settings_keys = ["left_click_radius", "left_click_color", "right_click_radius", "right_click_color", "left_click_release_radius", "left_click_release_color", "right_click_release_radius", "right_click_release_color"]
+        
+        for i, key in enumerate(click_settings_keys):
+            label_text = key.replace('_', ' ').title() + ":"
+            is_color = "color" in key
+            var_type = self.TK_VAR_TYPES.get(type(self.config[key]), StringVar)
+            var = var_type(value=self.config[key])
+            self.settings_vars[key] = var
+            
+            label = Label(parent_frame, text=label_text)
+            label.grid(row=i, column=0, sticky="w", padx=5, pady=2)
+            
+            if is_color:
+                button = Button(parent_frame, text="Choose", command=lambda v=var: self._choose_color(v))
+                button.grid(row=i, column=1, padx=5, pady=2)
+                widgets.extend([label, button])
+            else:
+                entry = Entry(parent_frame, textvariable=var, width=10)
+                entry.grid(row=i, column=1, padx=5, pady=2)
+                widgets.extend([label, entry])
+
+        def toggle_state(*args):
+            state = tk.DISABLED if enabled_var.get() else tk.NORMAL
+            for widget in widgets:
+                widget.config(state=state)
+                if state == tk.DISABLED:
+                    widget.bind("<Enter>", lambda e, w=widget: tooltip.show_tooltip(w))
+                    widget.bind("<Leave>", lambda e: tooltip.hide_tooltip())
+                else:
+                    widget.unbind("<Enter>")
+                    widget.unbind("<Leave>")
+
+        enabled_var.trace_add("write", toggle_state)
+        toggle_state()
+
+    def _create_toggled_image_group(self, parent_frame: Frame, toggle_text: str, enabled_var: BooleanVar, path_fields: List[Tuple[str, str]], scale_fields: List[Tuple[str, str]], is_cursor_tab: bool) -> None:
+        """
+        Creates a group of widgets that can be enabled or disabled by a single checkbox.
+        Used for both custom cursors and custom clicks.
+        """
         widgets = []
         
         toggle_checkbutton = Checkbutton(parent_frame, text=toggle_text, variable=enabled_var)
@@ -544,7 +597,8 @@ class SettingsPanel:
             path_var = StringVar(value=self.config.get(path_key, ""))
             self.settings_vars[path_key] = path_var
             
-            Label(parent_frame, text=label_text).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+            label = Label(parent_frame, text=label_text)
+            label.grid(row=row, column=0, sticky="w", padx=5, pady=2)
             
             entry = Entry(parent_frame, textvariable=path_var, width=20)
             entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
@@ -552,30 +606,50 @@ class SettingsPanel:
             browse_button = Button(parent_frame, text="Browse", command=lambda v=path_var: self._choose_image_file(v))
             browse_button.grid(row=row, column=2, padx=5, pady=2)
             
-            widgets.extend([entry, browse_button])
+            widgets.extend([label, entry, browse_button])
             row += 1
             
         for label_text, scale_key in scale_fields:
             scale_var = DoubleVar(value=self.config.get(scale_key, 1.0))
             self.settings_vars[scale_key] = scale_var
             
-            Label(parent_frame, text=label_text).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+            label = Label(parent_frame, text=label_text)
+            label.grid(row=row, column=0, sticky="w", padx=5, pady=2)
             
             entry = Entry(parent_frame, textvariable=scale_var, width=10)
             entry.grid(row=row, column=1, padx=5, pady=2)
             
-            widgets.append(entry)
+            widgets.extend([label, entry])
             row += 1
             
+        if is_cursor_tab:
+            cursor_on_top_var = BooleanVar(value=self.config.get("cursor_on_top", False))
+            self.settings_vars["cursor_on_top"] = cursor_on_top_var
+            cursor_on_top_checkbutton = Checkbutton(parent_frame, text="Draw Cursor Over Clicks", variable=cursor_on_top_var)
+            cursor_on_top_checkbutton.grid(row=row, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+            widgets.append(cursor_on_top_checkbutton)
+            row += 1
+
+            alignment_label = Label(parent_frame, text="Cursor Alignment:")
+            alignment_label.grid(row=row, column=0, sticky="w", padx=5, pady=2)
+            alignment_options = ["Center", "Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right"]
+            alignment_var = StringVar(value=self.config.get("cursor_alignment", "Center"))
+            self.settings_vars["cursor_alignment"] = alignment_var
+            alignment_menu = OptionMenu(parent_frame, alignment_var, *alignment_options)
+            alignment_menu.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+            widgets.extend([alignment_label, alignment_menu])
+
         def toggle_state(*args):
             state = tk.NORMAL if enabled_var.get() else tk.DISABLED
             for widget in widgets:
                 widget.config(state=state)
         
         enabled_var.trace_add("write", toggle_state)
-        toggle_state() # Initialize the state correctly
+        toggle_state()
 
-    def _create_setting_field(self, parent_frame: Frame, label_text: str, key: str, row: int) -> None:
+    def _create_setting_field(self, parent_frame: Frame, key: str, row: int) -> None:
+        """Creates a single setting row with a label and an input widget."""
+        label_text = key.replace('_', ' ').title() + ":"
         is_color = "color" in key
         var_type = self.TK_VAR_TYPES.get(type(self.config[key]), StringVar)
         var = var_type(value=self.config[key])
@@ -593,11 +667,13 @@ class SettingsPanel:
             Entry(parent_frame, textvariable=var, width=10).grid(row=row, column=1, padx=5, pady=2)
 
     def _choose_color(self, color_var: StringVar) -> None:
+        """Opens a color chooser dialog and updates the linked variable."""
         color_code = colorchooser.askcolor(title="Choose Color")[1]
         if color_code:
             color_var.set(color_code)
 
     def _choose_image_file(self, path_var: StringVar) -> None:
+        """Opens a file dialog and updates the linked path variable."""
         file_path = filedialog.askopenfilename(
             filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
             title="Select an Image"
@@ -611,12 +687,39 @@ class SettingsPanel:
         self.apply_callback(new_config)
 
     def apply_and_close(self) -> None:
+        """Applies settings and then closes the window."""
         new_config = {key: var.get() for key, var in self.settings_vars.items()}
         self.apply_callback(new_config)
         self.close_window()
 
     def close_window(self) -> None:
+        """Destroys the settings window."""
         self.settings_window.destroy()
+
+class Tooltip:
+    """A simple tooltip class for providing information on hover."""
+    def __init__(self, parent, text):
+        self.parent = parent
+        self.text = text
+        self.tooltip_window = None
+
+    def show_tooltip(self, widget):
+        x, y, _, _ = widget.bbox("insert")
+        x += widget.winfo_rootx() + 25
+        y += widget.winfo_rooty() + 20
+        
+        self.tooltip_window = Toplevel(self.parent)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+        
+        label = Label(self.tooltip_window, text=self.text, background="#ffffe0", relief="solid", borderwidth=1,
+                      font=("Helvetica", 8))
+        label.pack(ipadx=1)
+
+    def hide_tooltip(self):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
 
 class Application:
     """Main application class to tie all components together."""
@@ -624,22 +727,23 @@ class Application:
         self.default_config = {
             "line_lifespan": 0.66,
             "frame_interval": 30,
-            "line_width": 4,
+            "line_width": 20,
             "line_color": "white",
             "canvas_bg_color": "black",
-            "left_click_color": "red",
-            "right_click_color": "blue",
-            "left_click_radius": 5,
-            "right_click_radius": 5,
+            "left_click_color": "#ff0000",
+            "right_click_color": "#0000ff",
+            "left_click_radius": 15,
+            "right_click_radius": 15,
             "left_click_release_color": "#ff8080",
             "right_click_release_color": "light sky blue",
-            "left_click_release_radius": 5,
-            "right_click_release_radius": 5,
+            "left_click_release_radius": 10,
+            "right_click_release_radius": 10,
             "coordinate_multiplier": 1.0,
             "line_style": "smooth_fade",
             "cursor_image_path": "",
             "cursor_image_enabled": False,
             "cursor_scale": 1.0,
+            "cursor_alignment": "Center",
             "left_click_image_path": "",
             "click_images_enabled": False,
             "left_click_image_scale": 1.0,
@@ -663,6 +767,7 @@ class Application:
         self.ui_manager = MouseTrackerUI(self.root, self.settings_manager, self.event_handler)
     
     def run(self) -> None:
+        """Starts the main application loop."""
         self.ui_manager.update_canvas()
         self.root.mainloop()
 
