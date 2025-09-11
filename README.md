@@ -21,5 +21,9 @@ This program tracks mouse input and displays movement as lines and mouse down an
 
 Usage example with OBS on the directional slasher Swordai (using crop and color-mask filters on the tracker window in OBS)
 
+
+
+https://github.com/user-attachments/assets/eaf3e47c-722c-44ed-a417-38ab4f89b8a9
+
 https://github.com/user-attachments/assets/3e0eceae-b649-4981-8878-dcd9ae051807
 
