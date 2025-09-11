@@ -1,2 +1,2 @@
 pynput
-pywin32
+PIL
