@@ -1,5 +1,8 @@
 100% AI generated code.  Gemini 2.5 Flash.  Consider this (basically) instantly abandoned, do what you want with the code.
 
+#### Latest revision being flagged as a trojan by Windows Defender, I uploaded it to microsoft for review.
+Virus Total: https://www.virustotal.com/gui/file/299066ac8eaa9c1d78319232047f2eaa50ad8088f953ad9f7cf46acd076a644e?nocache=1
+
 Features:
 - Configurable line (color, width, 4 styles, time to live, frame interval, sensitivity)
 - Configurable background color
